@@ -25,6 +25,7 @@ export function LedgerSettings({ ledgerId }: { ledgerId: string }) {
   const { user, configured } = useAuth();
   const { ledger } = useLedger(ledgerId);
   const [message, setMessage] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
   const form = useForm<SettingsValues>({
     resolver: zodResolver(settingsSchema),
     values: {
@@ -39,8 +40,12 @@ export function LedgerSettings({ ledgerId }: { ledgerId: string }) {
       return;
     }
 
-    await renameLedger(db, ledgerId, user.uid, values.name);
-    setMessage("Saved.");
+    try {
+      await renameLedger(db, ledgerId, user.uid, values.name);
+      setMessage("Saved.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save settings.");
+    }
   }
 
   async function onDelete() {
@@ -50,8 +55,19 @@ export function LedgerSettings({ ledgerId }: { ledgerId: string }) {
       return;
     }
 
-    await softDeleteLedger(db, ledgerId, user.uid);
-    setMessage("Ledger deleted.");
+    if (!window.confirm(`Delete ${ledger?.name ?? "this ledger"}? Members will lose access.`)) {
+      return;
+    }
+
+    setPending(true);
+    try {
+      await softDeleteLedger(db, ledgerId, user.uid);
+      setMessage("Ledger deleted.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not delete ledger.");
+    } finally {
+      setPending(false);
+    }
   }
 
   async function onArchive() {
@@ -61,9 +77,18 @@ export function LedgerSettings({ ledgerId }: { ledgerId: string }) {
       return;
     }
 
-    await setLedgerArchived(db, ledgerId, user.uid, !ledger?.archivedAt);
-    setMessage(ledger?.archivedAt ? "Ledger restored." : "Ledger archived.");
+    setPending(true);
+    try {
+      await setLedgerArchived(db, ledgerId, user.uid, !ledger?.archivedAt);
+      setMessage(ledger?.archivedAt ? "Ledger restored." : "Ledger archived.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not change archive state.");
+    } finally {
+      setPending(false);
+    }
   }
+
+  const busy = form.formState.isSubmitting || pending;
 
   return (
     <Card className="mx-auto max-w-xl">
@@ -79,15 +104,15 @@ export function LedgerSettings({ ledgerId }: { ledgerId: string }) {
           </div>
           {message ? <p className="rounded-md bg-[var(--surface-soft)] p-3 text-sm text-[var(--muted)]">{message}</p> : null}
           <div className="flex flex-wrap gap-2">
-            <Button disabled={form.formState.isSubmitting} type="submit">
+            <Button disabled={busy} type="submit">
               <Save className="h-4 w-4" />
               Save
             </Button>
-            <Button onClick={() => void onArchive()} type="button" variant="secondary">
+            <Button disabled={busy} onClick={() => void onArchive()} type="button" variant="secondary">
               <Archive className="h-4 w-4" />
               {ledger?.archivedAt ? "Unarchive" : "Archive"}
             </Button>
-            <Button onClick={() => void onDelete()} type="button" variant="destructive">
+            <Button disabled={busy} onClick={() => void onDelete()} type="button" variant="destructive">
               <Trash2 className="h-4 w-4" />
               Delete
             </Button>

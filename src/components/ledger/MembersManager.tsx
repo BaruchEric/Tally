@@ -43,25 +43,37 @@ export function MembersManager({ ledgerId }: { ledgerId: string }) {
       return;
     }
 
-    const inviteId = await createInvite({
-      db,
-      ledgerId,
-      email: values.email,
-      role: values.role,
-      invitedBy: user.uid
-    });
-    setMessage(`Invite created: ${inviteId}`);
-    form.reset();
+    try {
+      const inviteId = await createInvite({
+        db,
+        ledgerId,
+        email: values.email,
+        role: values.role,
+        invitedBy: user.uid
+      });
+      setMessage(`Invite created: ${inviteId}`);
+      form.reset();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not create invite.");
+    }
   }
 
-  async function onRemove(memberUid: string) {
+  async function onRemove(memberUid: string, memberName: string) {
     const db = getFirestoreDb();
     if (!db || !user) {
       setMessage(configured ? "Sign in to remove members." : "Demo mode keeps members read-only.");
       return;
     }
 
-    await removeMember(db, ledgerId, user.uid, memberUid);
+    if (!window.confirm(`Remove ${memberName} from this ledger?`)) {
+      return;
+    }
+
+    try {
+      await removeMember(db, ledgerId, user.uid, memberUid);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not remove member.");
+    }
   }
 
   return (
@@ -82,7 +94,7 @@ export function MembersManager({ ledgerId }: { ledgerId: string }) {
               <Button
                 aria-label={`Remove ${member.displayName ?? member.uid}`}
                 disabled={member.role === "owner"}
-                onClick={() => void onRemove(member.uid)}
+                onClick={() => void onRemove(member.uid, member.displayName ?? member.email ?? member.uid)}
                 size="icon"
                 title="Remove member"
                 variant="ghost"

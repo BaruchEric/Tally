@@ -6,7 +6,7 @@ import { updateProfile } from "firebase/auth";
 import Image from "next/image";
 import Link from "next/link";
 import { MailCheck, UserRound } from "lucide-react";
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 
 import { Button } from "@/src/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/src/components/ui/card";
@@ -19,29 +19,40 @@ export function ProfilePanel() {
   const { user, configured, signOut } = useAuth();
   const [message, setMessage] = useState<string | null>(null);
 
-  async function onAvatarChange(file: File | undefined) {
+  async function onAvatarChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    const input = event.target;
     const storage = getFirebaseStorage();
     const db = getFirestoreDb();
 
     if (!file || !user || !storage || !db) {
       setMessage(configured ? "Sign in to upload an avatar." : "Demo mode keeps profile storage read-only.");
+      input.value = "";
       return;
     }
 
-    const extension = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
-    const avatarRef = ref(storage, `avatars/${user.uid}/avatar.${extension}`);
-    await uploadBytes(avatarRef, file, { contentType: file.type });
-    const photoURL = await getDownloadURL(avatarRef);
-    await updateProfile(user, { photoURL });
-    await setDoc(
-      doc(db, "users", user.uid),
-      {
-        photoURL,
-        updatedAt: serverTimestamp()
-      },
-      { merge: true }
-    );
-    setMessage("Avatar updated.");
+    try {
+      const extension = file.name.includes(".")
+        ? (file.name.split(".").pop() ?? "jpg").toLowerCase()
+        : "jpg";
+      const avatarRef = ref(storage, `avatars/${user.uid}/avatar.${extension}`);
+      await uploadBytes(avatarRef, file, { contentType: file.type });
+      const photoURL = await getDownloadURL(avatarRef);
+      await updateProfile(user, { photoURL });
+      await setDoc(
+        doc(db, "users", user.uid),
+        {
+          photoURL,
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+      setMessage("Avatar updated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not upload avatar.");
+    } finally {
+      input.value = "";
+    }
   }
 
   return (
@@ -83,7 +94,7 @@ export function ProfilePanel() {
             accept="image/png,image/jpeg,image/webp"
             disabled={!user}
             id="avatar"
-            onChange={(event) => void onAvatarChange(event.target.files?.[0])}
+            onChange={(event) => void onAvatarChange(event)}
             type="file"
           />
         </div>

@@ -6,21 +6,20 @@ import { CircleDollarSign, LogOut, Plus, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { BottomNav } from "@/src/components/nav/BottomNav";
+import { activeLedgerIdFromPathname, isNavItemActive, navItems, resolveNavHref } from "@/src/components/nav/navItems";
 import { OfflineBanner } from "@/src/components/system/OfflineBanner";
 import { Button } from "@/src/components/ui/button";
 import { useAuth } from "@/src/lib/auth/AuthProvider";
 import { cn } from "@/src/lib/utils";
 
-const topNavItems = [
-  { href: "/", label: "Ledgers" },
-  { href: "/ledgers/demo-ledger/balances", label: "Balances" },
-  { href: "/ledgers/demo-ledger/members", label: "Members" },
-  { href: "/profile", label: "Profile" }
-];
-
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { user, loading, configured, signOut } = useAuth();
+  const activeLedgerId = activeLedgerIdFromPathname(pathname ?? "");
+  const topItems = navItems
+    .filter((item) => item.label !== "Entries")
+    .map((item) => ({ item, href: resolveNavHref(item, activeLedgerId) }))
+    .filter(({ href }) => href !== null) as Array<{ item: (typeof navItems)[number]; href: string }>;
 
   return (
     <div className="min-h-screen pb-20 md:pb-0">
@@ -34,14 +33,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="text-lg">Tally</span>
           </Link>
           <nav className="hidden items-center gap-1 md:flex">
-            {topNavItems.map((item) => (
+            {topItems.map(({ item, href }) => (
               <Link
                 className={cn(
                   "rounded-md px-3 py-2 text-sm font-medium text-[var(--muted)] transition hover:bg-white hover:text-[var(--foreground)]",
-                  pathname === item.href && "bg-white text-[var(--foreground)] shadow-sm"
+                  isNavItemActive(href, pathname ?? "") && "bg-white text-[var(--foreground)] shadow-sm"
                 )}
-                href={item.href}
-                key={item.href}
+                href={href}
+                key={item.label}
               >
                 {item.label}
               </Link>

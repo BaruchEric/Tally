@@ -1,15 +1,24 @@
-"use client";
-
 export function registerServiceWorker(onUpdateReady?: (registration: ServiceWorkerRegistration) => void) {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
-    return;
+    return undefined;
   }
 
-  window.addEventListener("load", () => {
+  let cancelled = false;
+  const hadController = Boolean(navigator.serviceWorker.controller);
+
+  function attach() {
+    if (cancelled) {
+      return;
+    }
+
     void navigator.serviceWorker
       .register("/sw.js")
       .then((registration) => {
-        if (registration.waiting) {
+        if (cancelled) {
+          return;
+        }
+
+        if (registration.waiting && hadController) {
           onUpdateReady?.(registration);
         }
 
@@ -29,5 +38,18 @@ export function registerServiceWorker(onUpdateReady?: (registration: ServiceWork
       .catch((error) => {
         console.warn("Service worker registration failed", error);
       });
-  });
+  }
+
+  if (document.readyState === "complete") {
+    attach();
+    return () => {
+      cancelled = true;
+    };
+  }
+
+  window.addEventListener("load", attach, { once: true });
+  return () => {
+    cancelled = true;
+    window.removeEventListener("load", attach);
+  };
 }

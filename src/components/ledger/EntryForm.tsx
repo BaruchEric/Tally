@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 
@@ -14,7 +14,9 @@ import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
 import { Select } from "@/src/components/ui/select";
 import { Textarea } from "@/src/components/ui/textarea";
+import { useMembers } from "@/src/hooks/useMembers";
 import { useAuth } from "@/src/lib/auth/AuthProvider";
+import { todayIsoDate } from "@/src/lib/dates";
 import { getFirebaseStorage, getFirestoreDb } from "@/src/lib/firebase/client";
 import { addLedgerEntry, updateLedgerEntry } from "@/src/lib/ledgers/queries";
 import { getCurrencyExponent, parseMoneyInput } from "@/src/lib/money";
@@ -47,25 +49,41 @@ export function EntryForm({ ledgerId, currency = "USD" }: { ledgerId: string; cu
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, configured } = useAuth();
+  const { members } = useMembers(ledgerId);
   const [message, setMessage] = useState<string | null>(null);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
-  const today = new Date().toISOString().slice(0, 10);
+  const initialType = searchParams.get("type") === "transfer" ? "transfer" : "expense";
+  const initialCurrency = searchParams.get("currency") ?? currency;
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      type: searchParams.get("type") === "transfer" ? "transfer" : "expense",
-      description: searchParams.get("type") === "transfer" ? "Settle up" : "",
-      amount: minorToInput(searchParams.get("amountMinor"), searchParams.get("currency") ?? currency),
-      currency: searchParams.get("currency") ?? currency,
-      date: today,
-      payerUid: user?.uid ?? "alex",
-      fromUid: searchParams.get("from") ?? user?.uid ?? "alex",
-      toUid: searchParams.get("to") ?? "sam",
-      participants: user?.uid ?? "alex, sam",
+      type: initialType,
+      description: initialType === "transfer" ? "Settle up" : "",
+      amount: minorToInput(searchParams.get("amountMinor"), initialCurrency),
+      currency: initialCurrency,
+      date: todayIsoDate(),
+      payerUid: "",
+      fromUid: searchParams.get("from") ?? "",
+      toUid: searchParams.get("to") ?? "",
+      participants: "",
       note: ""
     }
   });
   const type = useWatch({ control: form.control, name: "type" });
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    const current = form.getValues();
+    form.reset({
+      ...current,
+      payerUid: current.payerUid || user.uid,
+      fromUid: current.fromUid || user.uid,
+      participants: current.participants || user.uid
+    });
+  }, [user, form]);
 
   async function onSubmit(values: FormValues) {
     const db = getFirestoreDb();
@@ -74,48 +92,54 @@ export function EntryForm({ ledgerId, currency = "USD" }: { ledgerId: string; cu
       return;
     }
 
-    const amount = parseMoneyInput(values.amount, values.currency);
-    if (values.type === "expense") {
-      const participants = values.participants
-        .split(",")
-        .map((participant) => participant.trim())
-        .filter(Boolean);
+    try {
+      const amount = parseMoneyInput(values.amount, values.currency);
+      if (values.type === "expense") {
+        const participants = values.participants
+          .split(",")
+          .map((participant) => participant.trim())
+          .filter(Boolean);
 
-      const entryId = await addLedgerEntry(db, ledgerId, {
-        type: "expense",
-        createdBy: user.uid,
-        payerUid: values.payerUid,
-        amount,
-        split: { mode: "equal", participants },
-        date: values.date,
-        description: values.description,
-        note: values.note
-      });
+        const entryId = await addLedgerEntry(db, ledgerId, {
+          type: "expense",
+          createdBy: user.uid,
+          payerUid: values.payerUid,
+          amount,
+          split: { mode: "equal", participants },
+          date: values.date,
+          description: values.description,
+          note: values.note
+        });
 
-      const storage = getFirebaseStorage();
-      if (receiptFile && storage) {
-        const safeName = receiptFile.name.replace(/[^a-z0-9._-]/gi, "-").toLowerCase();
-        const receiptPath = `receipts/${ledgerId}/${entryId}/${safeName}`;
-        const receiptRef = ref(storage, receiptPath);
-        await uploadBytes(receiptRef, receiptFile, { contentType: receiptFile.type });
-        const receiptURL = await getDownloadURL(receiptRef);
-        await updateLedgerEntry(db, ledgerId, entryId, user.uid, { receiptPath, receiptURL });
+        const storage = getFirebaseStorage();
+        if (receiptFile && storage) {
+          const safeName = receiptFile.name.replace(/[^a-z0-9._-]/gi, "-").toLowerCase();
+          const receiptPath = `receipts/${ledgerId}/${entryId}/${safeName}`;
+          const receiptRef = ref(storage, receiptPath);
+          await uploadBytes(receiptRef, receiptFile, { contentType: receiptFile.type });
+          const receiptURL = await getDownloadURL(receiptRef);
+          await updateLedgerEntry(db, ledgerId, entryId, user.uid, { receiptPath, receiptURL });
+        }
+      } else {
+        await addLedgerEntry(db, ledgerId, {
+          type: "transfer",
+          createdBy: user.uid,
+          fromUid: values.fromUid,
+          toUid: values.toUid,
+          amount,
+          date: values.date,
+          description: values.description,
+          note: values.note
+        });
       }
-    } else {
-      await addLedgerEntry(db, ledgerId, {
-        type: "transfer",
-        createdBy: user.uid,
-        fromUid: values.fromUid,
-        toUid: values.toUid,
-        amount,
-        date: values.date,
-        description: values.description,
-        note: values.note
-      });
-    }
 
-    router.push(`/ledgers/${ledgerId}`);
+      router.push(`/ledgers/${ledgerId}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save entry.");
+    }
   }
+
+  const memberOptions = members.length > 0 ? members : (user ? [{ uid: user.uid, displayName: user.displayName ?? user.email ?? "You" }] : []);
 
   return (
     <Card className="mx-auto max-w-2xl">
@@ -155,8 +179,14 @@ export function EntryForm({ ledgerId, currency = "USD" }: { ledgerId: string; cu
           {type === "expense" ? (
             <>
               <div className="grid gap-2">
-                <Label htmlFor="payerUid">Payer uid</Label>
-                <Input id="payerUid" {...form.register("payerUid")} />
+                <Label htmlFor="payerUid">Payer</Label>
+                <Select id="payerUid" {...form.register("payerUid")}>
+                  {memberOptions.map((member) => (
+                    <option key={member.uid} value={member.uid}>
+                      {member.displayName ?? member.uid}
+                    </option>
+                  ))}
+                </Select>
               </div>
               <Controller
                 control={form.control}
@@ -167,12 +197,24 @@ export function EntryForm({ ledgerId, currency = "USD" }: { ledgerId: string; cu
           ) : (
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="grid gap-2">
-                <Label htmlFor="fromUid">From uid</Label>
-                <Input id="fromUid" {...form.register("fromUid")} />
+                <Label htmlFor="fromUid">From</Label>
+                <Select id="fromUid" {...form.register("fromUid")}>
+                  {memberOptions.map((member) => (
+                    <option key={member.uid} value={member.uid}>
+                      {member.displayName ?? member.uid}
+                    </option>
+                  ))}
+                </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="toUid">To uid</Label>
-                <Input id="toUid" {...form.register("toUid")} />
+                <Label htmlFor="toUid">To</Label>
+                <Select id="toUid" {...form.register("toUid")}>
+                  {memberOptions.map((member) => (
+                    <option key={member.uid} value={member.uid}>
+                      {member.displayName ?? member.uid}
+                    </option>
+                  ))}
+                </Select>
               </div>
             </div>
           )}

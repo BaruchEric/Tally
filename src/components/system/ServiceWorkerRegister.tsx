@@ -10,7 +10,7 @@ export function ServiceWorkerRegister() {
   const [registration, setRegistration] = useState<ServiceWorkerRegistration | null>(null);
 
   useEffect(() => {
-    registerServiceWorker(setRegistration);
+    return registerServiceWorker(setRegistration);
   }, []);
 
   if (!registration) {

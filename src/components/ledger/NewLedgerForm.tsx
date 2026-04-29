@@ -14,6 +14,7 @@ import { Select } from "@/src/components/ui/select";
 import { useAuth } from "@/src/lib/auth/AuthProvider";
 import { getFirestoreDb } from "@/src/lib/firebase/client";
 import { createLedger } from "@/src/lib/ledgers/queries";
+import { SUPPORTED_CURRENCIES } from "@/src/lib/money";
 
 const formSchema = z.object({
   name: z.string().trim().min(1),
@@ -41,15 +42,19 @@ export function NewLedgerForm() {
       return;
     }
 
-    const ledgerId = await createLedger({
-      db,
-      uid: user.uid,
-      displayName: user.displayName,
-      email: user.email,
-      name: values.name,
-      currency: values.currency
-    });
-    router.push(`/ledgers/${ledgerId}`);
+    try {
+      const ledgerId = await createLedger({
+        db,
+        uid: user.uid,
+        displayName: user.displayName,
+        email: user.email,
+        name: values.name,
+        currency: values.currency
+      });
+      router.push(`/ledgers/${ledgerId}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not create ledger.");
+    }
   }
 
   return (
@@ -67,11 +72,11 @@ export function NewLedgerForm() {
           <div className="grid gap-2">
             <Label htmlFor="currency">Currency</Label>
             <Select id="currency" {...form.register("currency")}>
-              <option value="USD">USD</option>
-              <option value="EUR">EUR</option>
-              <option value="GBP">GBP</option>
-              <option value="JPY">JPY</option>
-              <option value="CAD">CAD</option>
+              {SUPPORTED_CURRENCIES.map((code) => (
+                <option key={code} value={code}>
+                  {code}
+                </option>
+              ))}
             </Select>
           </div>
           {message ? <p className="rounded-md bg-[var(--surface-soft)] p-3 text-sm text-[var(--muted)]">{message}</p> : null}
