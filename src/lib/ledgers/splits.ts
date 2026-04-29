@@ -55,11 +55,10 @@ export function allocateMinorUnits(amountMinor: number, weights: number[]) {
 
 export function splitExpenseAmount(amountMinor: number, split: ExpenseSplit) {
   switch (split.mode) {
-    case "equal":
-      return split.participants.map((uid, index) => ({
-        uid,
-        amountMinor: allocateMinorUnits(amountMinor, split.participants.map(() => 1))[index]
-      }));
+    case "equal": {
+      const allocated = allocateMinorUnits(amountMinor, split.participants.map(() => 1));
+      return split.participants.map((uid, index) => ({ uid, amountMinor: allocated[index] }));
+    }
 
     case "exact": {
       const total = split.participants.reduce((sum, participant) => sum + participant.amountMinor, 0);
@@ -67,7 +66,7 @@ export function splitExpenseAmount(amountMinor: number, split: ExpenseSplit) {
         throw new Error("Exact split amounts must sum to the expense total.");
       }
 
-      return split.participants;
+      return split.participants.map((participant) => ({ uid: participant.uid, amountMinor: participant.amountMinor }));
     }
 
     case "shares": {

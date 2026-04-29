@@ -1,4 +1,4 @@
-import type { LedgerEntry, MoneyValue } from "@/src/lib/ledgers/schema";
+import type { LedgerEntry } from "@/src/lib/ledgers/schema";
 import { computeExpenseDeltas, type DeltaMap } from "@/src/lib/ledgers/splits";
 import { convertMoney, makeMoney } from "@/src/lib/money";
 
@@ -34,8 +34,7 @@ function convertDelta(amountMinor: number, fromCurrency: string, targetCurrency:
     throw new Error(`Missing FX snapshot for ${fromCurrency} to ${targetCurrency}.`);
   }
 
-  const converted = convertMoney(makeMoney(amountMinor, fromCurrency), targetCurrency, fx.rates);
-  return converted.amountMinor;
+  return convertMoney(makeMoney(amountMinor, fromCurrency), targetCurrency, fx.rates).amountMinor;
 }
 
 export function computeEntryDeltas(entry: LedgerEntry): DeltaMap {
@@ -69,7 +68,7 @@ export function computeLedgerNetBalances(
       continue;
     }
 
-    const entryCurrency = entry.type === "adjustment" ? entry.amount.currency : entry.amount.currency;
+    const entryCurrency = entry.amount.currency;
     const fx = fxByDate[entry.date];
     const deltas = computeEntryDeltas(entry);
 
@@ -88,7 +87,7 @@ export function simplifyDebts(netBalances: NetBalance[], toleranceMinor = 1): Si
     return [];
   }
 
-  const currency = netBalances[0]?.currency ?? "USD";
+  const currency = netBalances[0].currency;
   const creditors = netBalances
     .filter((balance) => balance.amountMinor > toleranceMinor)
     .map((balance) => ({ ...balance }))
@@ -139,6 +138,3 @@ export function computeSimplifiedDebts(
   return simplifyDebts(computeLedgerNetBalances(entries, ledgerCurrency, fxByDate));
 }
 
-export function netBalanceToMoney(balance: NetBalance): MoneyValue {
-  return makeMoney(balance.amountMinor, balance.currency);
-}

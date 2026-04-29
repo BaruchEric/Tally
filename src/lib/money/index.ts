@@ -1,4 +1,4 @@
-import { add, dinero, subtract, toSnapshot } from "dinero.js";
+import { dinero } from "dinero.js";
 
 import type { MoneyValue } from "@/src/lib/ledgers/schema";
 
@@ -8,18 +8,29 @@ type DineroCurrency = {
   exponent: number;
 };
 
-const currencyExponents: Record<string, number> = {
-  AUD: 2,
-  CAD: 2,
-  CHF: 2,
-  EUR: 2,
-  GBP: 2,
-  JPY: 0,
-  USD: 2
-};
+const zeroExponentCurrencies = new Set([
+  "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW",
+  "PYG", "RWF", "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF"
+]);
+
+const threeExponentCurrencies = new Set([
+  "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"
+]);
+
+const fourExponentCurrencies = new Set(["CLF", "UYW"]);
+
+export const SUPPORTED_CURRENCIES = [
+  "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NZD", "SEK", "NOK", "DKK"
+] as const;
+
+export type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
 
 export function getCurrencyExponent(currency: string) {
-  return currencyExponents[currency.toUpperCase()] ?? 2;
+  const code = currency.toUpperCase();
+  if (zeroExponentCurrencies.has(code)) return 0;
+  if (threeExponentCurrencies.has(code)) return 3;
+  if (fourExponentCurrencies.has(code)) return 4;
+  return 2;
 }
 
 export function getCurrencyMeta(currency: string): DineroCurrency {
@@ -56,14 +67,12 @@ export function assertSameCurrency(left: MoneyValue, right: MoneyValue) {
 
 export function addMoney(left: MoneyValue, right: MoneyValue): MoneyValue {
   assertSameCurrency(left, right);
-  const result = add(toDinero(left), toDinero(right));
-  return makeMoney(Number(toSnapshot(result).amount), left.currency);
+  return makeMoney(left.amountMinor + right.amountMinor, left.currency);
 }
 
 export function subtractMoney(left: MoneyValue, right: MoneyValue): MoneyValue {
   assertSameCurrency(left, right);
-  const result = subtract(toDinero(left), toDinero(right));
-  return makeMoney(Number(toSnapshot(result).amount), left.currency);
+  return makeMoney(left.amountMinor - right.amountMinor, left.currency);
 }
 
 export function parseMoneyInput(input: string, currency = "USD"): MoneyValue {
@@ -102,11 +111,17 @@ export function formatMoney(value: MoneyValue, locale = "en-US") {
   }).format(renderedAmount);
 }
 
+export function formatMinor(amountMinor: number, currency: string, locale = "en-US") {
+  return formatMoney(makeMoney(amountMinor, currency), locale);
+}
+
 function parseRateToMicros(rate: number | string) {
-  const text = String(rate);
-  const [major, decimals = ""] = text.split(".");
-  const micros = `${decimals}000000`.slice(0, 6);
-  return Number.parseInt(major, 10) * 1_000_000 + Number.parseInt(micros, 10);
+  const numeric = typeof rate === "number" ? rate : Number(rate);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    throw new Error(`Invalid FX rate: ${rate}`);
+  }
+
+  return Math.round(numeric * 1_000_000);
 }
 
 export function convertMoney(
