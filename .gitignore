@@ -1,0 +1,12 @@
+.DS_Store
+.env*.local
+.firebase/
+.next/
+coverage/
+dist/
+firestore-debug.log
+functions/lib/
+node_modules/
+playwright-report/
+test-results/
+tsconfig.tsbuildinfo
