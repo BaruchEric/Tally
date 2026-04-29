@@ -4,12 +4,9 @@ import Link from "next/link";
 
 import { Button } from "@/src/components/ui/button";
 import type { SimplifiedDebt } from "@/src/lib/ledgers/balances";
+import { getMemberName } from "@/src/lib/ledgers/members";
 import type { LedgerMember } from "@/src/lib/ledgers/schema";
-import { formatMoney, makeMoney } from "@/src/lib/money";
-
-function memberName(uid: string, members: LedgerMember[]) {
-  return members.find((member) => member.uid === uid)?.displayName ?? uid;
-}
+import { formatMinor } from "@/src/lib/money";
 
 export function SimplifiedDebts({
   debts,
@@ -36,10 +33,10 @@ export function SimplifiedDebts({
           key={`${debt.fromUid}-${debt.toUid}`}
         >
           <span>
-            <span className="font-semibold">{memberName(debt.fromUid, members)}</span> pays{" "}
-            <span className="font-semibold">{memberName(debt.toUid, members)}</span>
+            <span className="font-semibold">{getMemberName(debt.fromUid, members)}</span> pays{" "}
+            <span className="font-semibold">{getMemberName(debt.toUid, members)}</span>
           </span>
-          <span className="font-semibold">{formatMoney(makeMoney(debt.amountMinor, debt.currency))}</span>
+          <span className="font-semibold">{formatMinor(debt.amountMinor, debt.currency)}</span>
           {ledgerId ? (
             <Button asChild size="sm" variant="secondary">
               <Link

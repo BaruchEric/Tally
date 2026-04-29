@@ -4,47 +4,35 @@ import Link from "next/link";
 import { Download, Plus, Settings } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { ActivityFeed } from "@/src/components/ledger/ActivityFeed";
 import { BalanceMatrix } from "@/src/components/ledger/BalanceMatrix";
 import { EntryList } from "@/src/components/ledger/EntryList";
 import { SimplifiedDebts } from "@/src/components/ledger/SimplifiedDebts";
 import { StatementDownload } from "@/src/components/ledger/StatementDownload";
-import { ActivityFeed } from "@/src/components/ledger/ActivityFeed";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Input } from "@/src/components/ui/input";
 import { Label } from "@/src/components/ui/label";
 import { Select } from "@/src/components/ui/select";
-import { useBalances } from "@/src/hooks/useBalances";
 import { useAuditLogs } from "@/src/hooks/useAuditLogs";
+import { useBalances } from "@/src/hooks/useBalances";
 import { useEntries } from "@/src/hooks/useEntries";
 import { useLedger } from "@/src/hooks/useLedger";
 import { useMembers } from "@/src/hooks/useMembers";
 import { entriesToCsv } from "@/src/lib/exports/csv";
+import { downloadBlob } from "@/src/lib/exports/download";
 import { buildStatementModel } from "@/src/lib/exports/statement";
+import { getEntryParticipants } from "@/src/lib/ledgers/members";
 import type { LedgerEntry } from "@/src/lib/ledgers/schema";
 
-function entryHasMember(entry: LedgerEntry, uid: string) {
-  if (entry.type === "expense") {
-    const participants =
-      entry.split.mode === "equal"
-        ? entry.split.participants
-        : entry.split.participants.map((participant) => participant.uid);
-    return entry.payerUid === uid || participants.includes(uid);
-  }
-
-  if (entry.type === "transfer") {
-    return entry.fromUid === uid || entry.toUid === uid;
-  }
-
-  return entry.targetUid === uid;
-}
+type EntryTypeFilter = "all" | LedgerEntry["type"];
 
 export function LedgerOverview({ ledgerId }: { ledgerId: string }) {
   const { ledger, loading: ledgerLoading } = useLedger(ledgerId);
   const { entries, loading: entriesLoading, hasPendingWrites, fromCache } = useEntries(ledgerId);
   const { members } = useMembers(ledgerId);
   const { auditLogs } = useAuditLogs(ledgerId);
-  const [typeFilter, setTypeFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState<EntryTypeFilter>("all");
   const [memberFilter, setMemberFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -56,7 +44,7 @@ export function LedgerOverview({ ledgerId }: { ledgerId: string }) {
           return false;
         }
 
-        if (memberFilter !== "all" && !entryHasMember(entry, memberFilter)) {
+        if (memberFilter !== "all" && !getEntryParticipants(entry).includes(memberFilter)) {
           return false;
         }
 
@@ -72,7 +60,7 @@ export function LedgerOverview({ ledgerId }: { ledgerId: string }) {
       }),
     [dateFrom, dateTo, entries, memberFilter, typeFilter]
   );
-  const { netBalances, settlements } = useBalances(filteredEntries, currency);
+  const { netBalances, settlements } = useBalances(entries, currency);
   const statement = useMemo(
     () =>
       ledger
@@ -89,12 +77,7 @@ export function LedgerOverview({ ledgerId }: { ledgerId: string }) {
   function downloadCsv() {
     const csv = entriesToCsv(filteredEntries, members);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${ledger?.name ?? "tally"}-entries.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `${ledger?.name ?? "tally"}-entries.csv`);
   }
 
   if (ledgerLoading || entriesLoading) {
@@ -109,7 +92,7 @@ export function LedgerOverview({ ledgerId }: { ledgerId: string }) {
     <div className="grid gap-6">
       {(hasPendingWrites || fromCache) && (
         <div className="rounded-md border border-[var(--border)] bg-white p-3 text-sm text-[var(--muted)]">
-          {hasPendingWrites ? "Queued writes: 1+" : "Showing cached data."}
+          {hasPendingWrites ? "Saving changes…" : "Showing cached data."}
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -153,7 +136,11 @@ export function LedgerOverview({ ledgerId }: { ledgerId: string }) {
               </div>
               <div className="grid gap-1">
                 <Label htmlFor="typeFilter">Type</Label>
-                <Select id="typeFilter" onChange={(event) => setTypeFilter(event.target.value)} value={typeFilter}>
+                <Select
+                  id="typeFilter"
+                  onChange={(event) => setTypeFilter(event.target.value as EntryTypeFilter)}
+                  value={typeFilter}
+                >
                   <option value="all">All</option>
                   <option value="expense">Expense</option>
                   <option value="transfer">Transfer</option>

@@ -10,6 +10,7 @@ import { useAuditLogs } from "@/src/hooks/useAuditLogs";
 import { useEntries } from "@/src/hooks/useEntries";
 import { useMembers } from "@/src/hooks/useMembers";
 import { formatEntryDate } from "@/src/lib/dates";
+import { formatEntryActor } from "@/src/lib/ledgers/members";
 import { formatMoney } from "@/src/lib/money";
 
 export function EntryDetail({ ledgerId, entryId }: { ledgerId: string; entryId: string }) {
@@ -22,8 +23,6 @@ export function EntryDetail({ ledgerId, entryId }: { ledgerId: string; entryId: 
   if (!entry) {
     return <Card><CardContent className="p-6">Entry not found.</CardContent></Card>;
   }
-
-  const memberName = (uid: string) => members.find((member) => member.uid === uid)?.displayName ?? uid;
 
   return (
     <div className="mx-auto grid max-w-2xl gap-4">
@@ -53,13 +52,7 @@ export function EntryDetail({ ledgerId, entryId }: { ledgerId: string; entryId: 
             </div>
             <div>
               <dt className="text-[var(--muted)]">Actor</dt>
-              <dd className="font-semibold">
-                {entry.type === "expense"
-                  ? memberName(entry.payerUid)
-                  : entry.type === "transfer"
-                    ? `${memberName(entry.fromUid)} to ${memberName(entry.toUid)}`
-                    : memberName(entry.targetUid)}
-              </dd>
+              <dd className="font-semibold">{formatEntryActor(entry, members)}</dd>
             </div>
           </dl>
           <div className="rounded-md border border-[var(--border)] bg-[var(--surface-soft)] p-3 text-sm text-[var(--muted)]">

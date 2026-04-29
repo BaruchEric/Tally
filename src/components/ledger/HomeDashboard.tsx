@@ -44,7 +44,11 @@ export function HomeDashboard() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {ledgers.map((ledger) => (
-            <LedgerCard entries={ledger.id === demoLedger.id ? demoEntries : []} key={ledger.id} ledger={ledger} />
+            <LedgerCard
+              entries={ledger.id === demoLedger.id ? demoEntries : undefined}
+              key={ledger.id}
+              ledger={ledger}
+            />
           ))}
         </div>
       )}

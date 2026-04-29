@@ -5,7 +5,8 @@ import { FileText } from "lucide-react";
 
 import { buttonVariants } from "@/src/components/ui/button";
 import type { StatementModel } from "@/src/lib/exports/statement";
-import { formatMoney, makeMoney } from "@/src/lib/money";
+import { getMemberName } from "@/src/lib/ledgers/members";
+import { formatMinor, formatMoney } from "@/src/lib/money";
 import { cn } from "@/src/lib/utils";
 
 const styles = StyleSheet.create({
@@ -51,10 +52,6 @@ const styles = StyleSheet.create({
   }
 });
 
-function memberName(uid: string, model: StatementModel) {
-  return model.members.find((member) => member.uid === uid)?.displayName ?? uid;
-}
-
 function StatementDocument({ model }: { model: StatementModel }) {
   return (
     <Document title={`${model.title} statement`}>
@@ -66,8 +63,8 @@ function StatementDocument({ model }: { model: StatementModel }) {
           <Text style={styles.sectionTitle}>Net balances</Text>
           {model.totals.map((balance) => (
             <View key={balance.uid} style={styles.row}>
-              <Text style={styles.label}>{memberName(balance.uid, model)}</Text>
-              <Text style={styles.value}>{formatMoney(makeMoney(balance.amountMinor, balance.currency))}</Text>
+              <Text style={styles.label}>{getMemberName(balance.uid, model.members)}</Text>
+              <Text style={styles.value}>{formatMinor(balance.amountMinor, balance.currency)}</Text>
             </View>
           ))}
         </View>
@@ -80,9 +77,9 @@ function StatementDocument({ model }: { model: StatementModel }) {
             model.settlements.map((settlement) => (
               <View key={`${settlement.fromUid}-${settlement.toUid}`} style={styles.row}>
                 <Text style={styles.label}>
-                  {memberName(settlement.fromUid, model)} pays {memberName(settlement.toUid, model)}
+                  {getMemberName(settlement.fromUid, model.members)} pays {getMemberName(settlement.toUid, model.members)}
                 </Text>
-                <Text style={styles.value}>{formatMoney(makeMoney(settlement.amountMinor, settlement.currency))}</Text>
+                <Text style={styles.value}>{formatMinor(settlement.amountMinor, settlement.currency)}</Text>
               </View>
             ))
           )}

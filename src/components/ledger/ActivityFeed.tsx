@@ -3,10 +3,7 @@
 import { History } from "lucide-react";
 
 import type { AuditLog, LedgerMember } from "@/src/lib/ledgers/schema";
-
-function memberName(uid: string, members: LedgerMember[]) {
-  return members.find((member) => member.uid === uid)?.displayName ?? uid;
-}
+import { getMemberName } from "@/src/lib/ledgers/members";
 
 function auditTime(value: unknown) {
   if (typeof value === "string") {
@@ -57,7 +54,7 @@ export function ActivityFeed({
           <div className="grid gap-1 rounded-md border border-[var(--border)] bg-white p-3 text-sm" key={log.id}>
             <div className="flex items-center gap-2 font-medium">
               <History className="h-4 w-4 text-[var(--primary)]" />
-              <span>{memberName(log.actorUid, members)}</span>
+              <span>{getMemberName(log.actorUid, members)}</span>
               <span className="text-[var(--muted)]">{log.action}</span>
             </div>
             <div className="truncate text-[var(--muted)]">{log.targetPath}</div>
