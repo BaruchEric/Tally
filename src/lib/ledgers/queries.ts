@@ -12,28 +12,42 @@ import {
   orderBy,
   query,
   serverTimestamp,
-  setDoc,
+  Timestamp,
   updateDoc,
   where,
   writeBatch,
-  type Firestore
+  type DocumentData,
+  type Firestore,
+  type WriteBatch
 } from "firebase/firestore";
 
-import type {
-  AdjustmentEntry,
-  ExpenseEntry,
-  Invite,
-  Ledger,
-  LedgerEntry,
-  LedgerMember,
-  LedgerRole,
-  TransferEntry
+import {
+  auditLogSchema,
+  entrySchema,
+  inviteSchema,
+  ledgerSchema,
+  type AdjustmentEntry,
+  type AuditLog,
+  type ExpenseEntry,
+  type Invite,
+  type Ledger,
+  type LedgerEntry,
+  type LedgerMember,
+  type LedgerRole,
+  type TransferEntry
 } from "@/src/lib/ledgers/schema";
 
 type NewLedgerEntry =
   | Omit<ExpenseEntry, "id" | "ledgerId">
   | Omit<TransferEntry, "id" | "ledgerId">
   | Omit<AdjustmentEntry, "id" | "ledgerId">;
+
+type LedgerEntryPatch =
+  | Partial<Omit<ExpenseEntry, "id" | "ledgerId" | "type">>
+  | Partial<Omit<TransferEntry, "id" | "ledgerId" | "type">>
+  | Partial<Omit<AdjustmentEntry, "id" | "ledgerId" | "type">>;
+
+const ENTRY_PAGE_SIZE = 1000;
 
 export function ledgersCollection(db: Firestore) {
   return collection(db, "ledgers");
@@ -73,11 +87,34 @@ export function ledgersForUserQuery(db: Firestore, uid: string) {
 }
 
 export function entriesForLedgerQuery(db: Firestore, ledgerId: string) {
-  return query(entriesCollection(db, ledgerId), where("deletedAt", "==", null), orderBy("date", "desc"), limit(200));
+  return query(
+    entriesCollection(db, ledgerId),
+    where("deletedAt", "==", null),
+    orderBy("date", "desc"),
+    limit(ENTRY_PAGE_SIZE)
+  );
 }
 
 export function pendingInvitesForEmailQuery(db: Firestore, email: string) {
   return query(invitesCollection(db), where("email", "==", email.toLowerCase()), where("status", "==", "pending"));
+}
+
+function appendAuditEntry(
+  batch: WriteBatch,
+  db: Firestore,
+  ledgerId: string,
+  fields: {
+    actorUid: string;
+    action: AuditLog["action"];
+    targetPath: string;
+    before?: unknown;
+    after?: unknown;
+  }
+) {
+  batch.set(doc(ledgerAuditCollection(db, ledgerId)), {
+    ...fields,
+    createdAt: serverTimestamp()
+  });
 }
 
 export async function createLedger({
@@ -116,12 +153,11 @@ export async function createLedger({
     updatedAt: serverTimestamp()
   });
   batch.set(doc(db, "ledgers", ledgerRef.id, "members", uid), member);
-  batch.set(doc(ledgerAuditCollection(db, ledgerRef.id)), {
+  appendAuditEntry(batch, db, ledgerRef.id, {
     actorUid: uid,
     action: "create",
     targetPath: ledgerRef.path,
-    after: { name, currency: currency.toUpperCase() },
-    createdAt: serverTimestamp()
+    after: { name, currency: currency.toUpperCase() }
   });
 
   await batch.commit();
@@ -129,44 +165,47 @@ export async function createLedger({
 }
 
 export async function renameLedger(db: Firestore, ledgerId: string, uid: string, name: string) {
-  await updateDoc(ledgerDoc(db, ledgerId), {
+  const batch = writeBatch(db);
+  batch.update(ledgerDoc(db, ledgerId), {
     name,
     updatedAt: serverTimestamp()
   });
-  await addDoc(ledgerAuditCollection(db, ledgerId), {
+  appendAuditEntry(batch, db, ledgerId, {
     actorUid: uid,
     action: "update",
     targetPath: `ledgers/${ledgerId}`,
-    after: { name },
-    createdAt: serverTimestamp()
+    after: { name }
   });
+  await batch.commit();
 }
 
 export async function softDeleteLedger(db: Firestore, ledgerId: string, uid: string) {
-  await updateDoc(ledgerDoc(db, ledgerId), {
+  const batch = writeBatch(db);
+  batch.update(ledgerDoc(db, ledgerId), {
     deletedAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   });
-  await addDoc(ledgerAuditCollection(db, ledgerId), {
+  appendAuditEntry(batch, db, ledgerId, {
     actorUid: uid,
     action: "delete",
-    targetPath: `ledgers/${ledgerId}`,
-    createdAt: serverTimestamp()
+    targetPath: `ledgers/${ledgerId}`
   });
+  await batch.commit();
 }
 
 export async function setLedgerArchived(db: Firestore, ledgerId: string, uid: string, archived: boolean) {
-  await updateDoc(ledgerDoc(db, ledgerId), {
+  const batch = writeBatch(db);
+  batch.update(ledgerDoc(db, ledgerId), {
     archivedAt: archived ? serverTimestamp() : null,
     updatedAt: serverTimestamp()
   });
-  await addDoc(ledgerAuditCollection(db, ledgerId), {
+  appendAuditEntry(batch, db, ledgerId, {
     actorUid: uid,
     action: "update",
     targetPath: `ledgers/${ledgerId}`,
-    after: { archived },
-    createdAt: serverTimestamp()
+    after: { archived }
   });
+  await batch.commit();
 }
 
 export async function createInvite({
@@ -188,7 +227,7 @@ export async function createInvite({
     role,
     invitedBy,
     status: "pending",
-    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 14),
+    expiresAt: Timestamp.fromMillis(Date.now() + 1000 * 60 * 60 * 24 * 14),
     createdAt: serverTimestamp()
   });
 
@@ -233,12 +272,11 @@ export async function removeMember(db: Firestore, ledgerId: string, actorUid: st
     memberUids: arrayRemove(memberUid),
     updatedAt: serverTimestamp()
   });
-  batch.set(doc(ledgerAuditCollection(db, ledgerId)), {
+  appendAuditEntry(batch, db, ledgerId, {
     actorUid,
     action: "member-change",
     targetPath: `ledgers/${ledgerId}/members/${memberUid}`,
-    after: { removedAt: true },
-    createdAt: serverTimestamp()
+    after: { removedAt: true }
   });
 
   await batch.commit();
@@ -246,14 +284,16 @@ export async function removeMember(db: Firestore, ledgerId: string, actorUid: st
 
 export async function addLedgerEntry(db: Firestore, ledgerId: string, entry: NewLedgerEntry) {
   const entryRef = doc(entriesCollection(db, ledgerId));
-  await setDoc(entryRef, {
+  const batch = writeBatch(db);
+  batch.set(entryRef, {
     ...entry,
     ledgerId,
     deletedAt: null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   });
-  await updateDoc(ledgerDoc(db, ledgerId), { updatedAt: serverTimestamp() });
+  batch.update(ledgerDoc(db, ledgerId), { updatedAt: serverTimestamp() });
+  await batch.commit();
   return entryRef.id;
 }
 
@@ -262,40 +302,45 @@ export async function updateLedgerEntry(
   ledgerId: string,
   entryId: string,
   actorUid: string,
-  patch: Partial<ExpenseEntry | TransferEntry>
+  patch: LedgerEntryPatch
 ) {
   const entryRef = doc(db, "ledgers", ledgerId, "entries", entryId);
   const before = await getDoc(entryRef);
+  const batch = writeBatch(db);
 
-  await updateDoc(entryRef, {
+  batch.update(entryRef, {
     ...patch,
     updatedAt: serverTimestamp()
   });
-  await addDoc(ledgerAuditCollection(db, ledgerId), {
+  appendAuditEntry(batch, db, ledgerId, {
     actorUid,
     action: "update",
     targetPath: entryRef.path,
     before: before.exists() ? before.data() : null,
-    after: patch,
-    createdAt: serverTimestamp()
+    after: patch
   });
+
+  await batch.commit();
 }
 
 export async function softDeleteEntry(db: Firestore, ledgerId: string, entryId: string, actorUid: string) {
   const entryRef = doc(db, "ledgers", ledgerId, "entries", entryId);
   const before = await getDoc(entryRef);
-  await updateDoc(entryRef, {
+  const batch = writeBatch(db);
+
+  batch.update(entryRef, {
     deletedAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   });
-  await addDoc(ledgerAuditCollection(db, ledgerId), {
+  appendAuditEntry(batch, db, ledgerId, {
     actorUid,
     action: "delete",
     targetPath: entryRef.path,
     before: before.exists() ? before.data() : null,
-    after: { deletedAt: true },
-    createdAt: serverTimestamp()
+    after: { deletedAt: true }
   });
+
+  await batch.commit();
 }
 
 export async function clearArchivedFlag(db: Firestore, ledgerId: string) {
@@ -307,39 +352,21 @@ export async function clearArchivedFlag(db: Firestore, ledgerId: string) {
 
 export async function loadLedgerMembers(db: Firestore, ledgerId: string) {
   const snapshot = await getDocs(membersCollection(db, ledgerId));
-  return snapshot.docs.map((memberDoc) => ({ uid: memberDoc.id, ...memberDoc.data() }) as LedgerMember);
+  return snapshot.docs.map((memberDoc) => ({ ...(memberDoc.data() as LedgerMember), uid: memberDoc.id }));
 }
 
-export function normalizeLedgerDoc(id: string, data: Record<string, unknown>): Ledger {
-  return {
-    id,
-    name: String(data.name ?? "Untitled ledger"),
-    currency: String(data.currency ?? "USD").toUpperCase(),
-    createdBy: String(data.createdBy ?? ""),
-    memberUids: Array.isArray(data.memberUids) ? data.memberUids.map(String) : [],
-    archivedAt: data.archivedAt,
-    deletedAt: data.deletedAt,
-    createdAt: data.createdAt,
-    updatedAt: data.updatedAt
-  };
+export function normalizeLedgerDoc(id: string, data: DocumentData): Ledger {
+  return ledgerSchema.parse({ id, ...data });
 }
 
-export function normalizeEntryDoc(id: string, data: Record<string, unknown>): LedgerEntry {
-  return {
-    id,
-    ...(data as Omit<LedgerEntry, "id">)
-  } as LedgerEntry;
+export function normalizeEntryDoc(id: string, data: DocumentData): LedgerEntry {
+  return entrySchema.parse({ id, ...data });
 }
 
-export function normalizeAuditDoc(id: string, data: Record<string, unknown>) {
-  return {
-    id,
-    actorUid: String(data.actorUid ?? "system"),
-    action: data.action,
-    targetPath: String(data.targetPath ?? ""),
-    before: data.before,
-    after: data.after,
-    diff: data.diff,
-    createdAt: data.createdAt
-  } as import("@/src/lib/ledgers/schema").AuditLog;
+export function normalizeAuditDoc(id: string, data: DocumentData): AuditLog {
+  return auditLogSchema.parse({ id, ...data });
+}
+
+export function normalizeInviteDoc(id: string, data: DocumentData): Invite {
+  return inviteSchema.parse({ id, ...data });
 }

@@ -9,9 +9,10 @@ import {
   signInWithPopup,
   signOut as firebaseSignOut,
   updateProfile,
+  type Auth,
   type User
 } from "firebase/auth";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { getFirebaseAuth, getFirestoreDb, isFirebaseConfigured } from "@/src/lib/firebase/client";
@@ -29,29 +30,47 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function requireAuth(): Auth {
+  const auth = getFirebaseAuth();
+  if (!auth) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  return auth;
+}
+
 async function mirrorUser(user: User) {
   const db = getFirestoreDb();
   if (!db) {
     return;
   }
 
-  await setDoc(
-    doc(db, "users", user.uid),
-    {
-      displayName: user.displayName,
-      email: user.email?.toLowerCase() ?? null,
-      photoURL: user.photoURL,
-      updatedAt: serverTimestamp(),
-      createdAt: serverTimestamp()
-    },
-    { merge: true }
-  );
+  const userRef = doc(db, "users", user.uid);
+  const existing = await getDoc(userRef);
+  const profile = {
+    displayName: user.displayName,
+    email: user.email?.toLowerCase() ?? null,
+    photoURL: user.photoURL,
+    updatedAt: serverTimestamp()
+  };
+
+  if (existing.exists()) {
+    await setDoc(userRef, profile, { merge: true });
+  } else {
+    await setDoc(userRef, { ...profile, createdAt: serverTimestamp() });
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const configured = isFirebaseConfigured();
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(configured);
+  const [loading, setLoading] = useState(() => {
+    if (!configured) {
+      return false;
+    }
+
+    return Boolean(getFirebaseAuth() && getFirestoreDb());
+  });
 
   useEffect(() => {
     const auth = getFirebaseAuth();
@@ -69,40 +88,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(nextUser);
       setLoading(false);
       if (nextUser) {
-        void mirrorUser(nextUser);
+        void mirrorUser(nextUser).catch((error) => {
+          console.warn("mirrorUser failed", error);
+        });
       }
     });
   }, []);
 
   const signInWithEmail = useCallback(async (email: string, password: string) => {
-    const auth = getFirebaseAuth();
-    if (!auth) {
-      throw new Error("Firebase is not configured.");
-    }
-
-    await signInWithEmailAndPassword(auth, email, password);
+    await signInWithEmailAndPassword(requireAuth(), email, password);
   }, []);
 
   const signUpWithEmail = useCallback(async (email: string, password: string, displayName: string) => {
-    const auth = getFirebaseAuth();
-    if (!auth) {
-      throw new Error("Firebase is not configured.");
-    }
-
-    const result = await createUserWithEmailAndPassword(auth, email, password);
+    const result = await createUserWithEmailAndPassword(requireAuth(), email, password);
     await updateProfile(result.user, { displayName });
     await sendEmailVerification(result.user);
     await mirrorUser(result.user);
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
-    const auth = getFirebaseAuth();
-    if (!auth) {
-      throw new Error("Firebase is not configured.");
-    }
-
     const provider = new GoogleAuthProvider();
-    const result = await signInWithPopup(auth, provider);
+    const result = await signInWithPopup(requireAuth(), provider);
     await mirrorUser(result.user);
   }, []);
 

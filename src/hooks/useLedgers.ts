@@ -1,37 +1,20 @@
 "use client";
 
-import { onSnapshot } from "firebase/firestore";
-import { useEffect, useState } from "react";
-
+import { useFirestoreCollection } from "@/src/hooks/useFirestoreSnapshot";
 import { useUser } from "@/src/lib/auth/useUser";
-import { getFirestoreDb } from "@/src/lib/firebase/client";
-import { demoLedger, type Ledger } from "@/src/lib/ledgers/schema";
 import { ledgersForUserQuery, normalizeLedgerDoc } from "@/src/lib/ledgers/queries";
+import { demoLedger, type Ledger } from "@/src/lib/ledgers/schema";
 
 export function useLedgers() {
   const { user, configured } = useUser();
-  const [ledgers, setLedgers] = useState<Ledger[]>(configured ? [] : [demoLedger]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const uid = user?.uid;
 
-  useEffect(() => {
-    const db = getFirestoreDb();
-    if (!db || !user) {
-      return undefined;
-    }
+  const { data, loading, error } = useFirestoreCollection<Ledger>({
+    buildQuery: (db) => (uid ? ledgersForUserQuery(db, uid) : null),
+    mapDoc: (snapshot) => normalizeLedgerDoc(snapshot.id, snapshot.data()),
+    deps: [uid],
+    demo: { match: !configured, data: [demoLedger] }
+  });
 
-    return onSnapshot(
-      ledgersForUserQuery(db, user.uid),
-      (snapshot) => {
-        setLedgers(snapshot.docs.map((ledger) => normalizeLedgerDoc(ledger.id, ledger.data())));
-        setLoading(false);
-      },
-      (snapshotError) => {
-        setError(snapshotError);
-        setLoading(false);
-      }
-    );
-  }, [user]);
-
-  return { ledgers, loading, error };
+  return { ledgers: data, loading, error };
 }
