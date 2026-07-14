@@ -4,23 +4,23 @@ A real-time, offline-capable shared expense ledger: track group expenses and tra
 
 ## TL;DR
 
-- **What:** A shared financial ledger for groups. Create ledgers, invite members, log expense/transfer entries with custom splits, and get live net balances, simplified debts, and settle-up prefill. CSV + PDF statement export, activity feed, and per-entry audit history.
-- **How:** Next.js 16 App Router (React 19) PWA. Realtime data + auth + file storage on Firebase; Cloud Functions handle balance recompute, audit logging, member sync, invite emails, and daily FX snapshots server-side.
+- **What:** A shared financial ledger for groups. Create ledgers, invite members by email, log expense/transfer entries with custom splits, and get live net balances, a balance matrix, simplified debts, and settle-up prefill — plus CSV + PDF export, an activity feed, and per-entry audit history.
+- **How:** Next.js 16 App Router (React 19) PWA. Realtime data, auth, and file storage on Firebase; Cloud Functions recompute balances, write audit logs, sync members, send invite emails, and snapshot daily FX rates server-side.
 - **Stack:** Bun, Next.js 16, React 19, TypeScript (strict), Tailwind CSS v4, Firebase (Auth + Firestore + Storage + Functions), react-hook-form + zod, Luxon (dates), dinero.js (money).
-- **Deploy:** Firebase backend (`tally-eb`) via `bun run deploy:firebase`; the Next.js web app is built for **Vercel** (`vercel.json`). No public live URL is configured in the repo (`APP_URL` defaults to `http://localhost:3000`).
-- **Run:** `bun install`, `cp .env.local.example .env.local`, `bun run dev`.
+- **Run:** `bun install`, `cp .env.local.example .env.local`, `bun run dev` → http://localhost:3000.
+- **Deploy:** Firebase backend (`tally-eb`) via `bun run deploy:firebase`; the Next.js web app targets **Vercel** (`vercel.json`). No public live URL is committed (`APP_URL` defaults to `http://localhost:3000`).
 
 ## Overview
 
-Tally tracks shared spending across a group and resolves balances:
+Tally tracks shared spending across a group and resolves who owes whom:
 
 - **Ledgers & membership** — create a ledger, invite members by email, accept invites, manage roles (`owner` / `editor` / `viewer`), and rename / archive / soft-delete ledgers.
 - **Entries** — expense and transfer entries with receipt upload, custom split allocation, and filters by date / member / type.
 - **Balances** — integer-minor-unit money math, local-midnight date handling, net balances, a balance matrix, simplified debts, and settle-up prefill.
 - **History & exports** — an activity feed, per-entry audit history, CSV export, and PDF statement download (`@react-pdf/renderer`).
-- **Offline / PWA** — Firestore offline persistence, a PWA manifest with icons, a hand-rolled service worker, an offline banner, a queued-write indicator, and an update prompt.
+- **Offline / PWA** — Firestore offline persistence, a PWA manifest with icons, a hand-rolled service worker, an offline banner, and a service-worker update prompt.
 
-Without Firebase configuration the app still renders its product shell with demo data, so UI and domain logic remain testable locally.
+**Demo mode:** without Firebase env values the app still renders its full product shell backed by a built-in `demoLedger` / `demoEntries` fixture (`src/lib/ledgers/schema.ts`), so UI and domain logic stay testable locally. Auth, storage, and writes are gated behind `isFirebaseConfigured()` and surface a "Demo mode" message instead.
 
 ## Tech stack
 
@@ -39,7 +39,7 @@ Without Firebase configuration the app still renders its product shell with demo
 
 - [bun](https://bun.sh)
 - A Firebase project (Auth, Firestore, Storage, Cloud Functions) for live data
-- The Firebase CLI (provided via `firebase-tools`) for emulator-backed rules tests and backend deploys
+- The Firebase CLI (bundled via `firebase-tools`) for emulator-backed rules tests and backend deploys
 
 ### Install & run
 
@@ -49,7 +49,7 @@ cp .env.local.example .env.local   # fill in Firebase + server values
 bun run dev                         # next dev on http://localhost:3000
 ```
 
-Fill in Firebase client values in `.env.local` before using live auth, storage, or Firestore writes. Without them, the app renders the same shell with demo data.
+Fill in the Firebase client values in `.env.local` before using live auth, storage, or Firestore writes. Without them, the app renders the same shell in demo mode.
 
 ### Environment variables
 
@@ -62,11 +62,11 @@ From `.env.local.example`:
 | `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | client | Firebase web config. |
 | `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | client | Firebase web config. |
 | `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | client | Firebase web config. |
-| `NEXT_PUBLIC_FIREBASE_APP_ID` | client | Firebase web config. |
+| `NEXT_PUBLIC_FIREBASE_APP_ID` | client | Firebase web config. Also gates demo mode (`isFirebaseConfigured`). |
 | `FIREBASE_PROJECT_ID` | server | Admin SDK credentials. |
 | `FIREBASE_CLIENT_EMAIL` | server | Admin SDK credentials. |
 | `FIREBASE_PRIVATE_KEY` | server | Admin SDK credentials. |
-| `RESEND_API_KEY` | server / functions | Required for real invite-email delivery. |
+| `RESEND_API_KEY` | server / functions | Required for real invite-email delivery; unset → sending is skipped. |
 | `INVITE_FROM_EMAIL` | server / functions | Verified sender, e.g. `"Tally <invites@example.com>"`. |
 | `APP_URL` | server | Deployed app URL; defaults to `http://localhost:3000`. |
 | `FX_BASE_URL` | functions | FX rate source (default `https://api.exchangerate.host`). |
@@ -84,57 +84,62 @@ From `.env.local.example`:
 | `test` | `vitest run` | Unit tests. |
 | `test:watch` | `vitest` | Unit tests in watch mode. |
 | `test:rules` | `firebase emulators:exec --only firestore "…"` | Firestore security-rule tests against the emulator. |
-| `e2e` | `playwright test` | End-to-end tests. |
-| `functions:build` | `cd functions && bun run build` | Build Cloud Functions. |
+| `e2e` | `playwright test` | End-to-end tests (`tests/e2e/golden-path.spec.ts`). |
+| `functions:build` | `cd functions && bun run build` | Compile Cloud Functions (tsc). |
 | `verify` | lint → typecheck → test → test:rules → build → functions:build → e2e | Full local gate. |
 | `deploy:firebase` | `firebase deploy --only firestore:rules,firestore:indexes,storage,functions` | Deploy the Firebase backend. |
 
-## Routes (App Router)
+## Architecture
 
-The App Router lives at top-level `app/` with `(auth)` and `(app)` route groups:
+### Routes (App Router)
+
+The App Router lives at the top-level `app/`, split into `(auth)` and `(app)` route groups:
 
 ```
 app/
   layout.tsx
   (auth)/        sign-in, sign-up, verify
-  (app)/         page (home), profile, invites/[id],
-                 ledgers/new, ledgers/[id] (+ settings, members,
-                 balances, entries/new, entries/[entryId])
+  (app)/         page (home), profile, invites/[id], ledgers/new,
+                 ledgers/[id] (+ settings, members, balances,
+                 entries/new, entries/[entryId]); loading + error boundaries
 src/
   components/    auth, invites, ledger, nav, profile, system, ui
-  hooks/         useLedger(s), useEntries, useBalances, useAuditLogs, useFirestoreSnapshot
+  hooks/         useLedger(s), useEntries, useBalances, useMembers,
+                 useAuditLogs, useFirestoreSnapshot
   lib/           auth/, dates/, exports/ (csv, statement, download),
                  firebase/ (client, admin, persistence), ledgers/
                  (queries, schema, splits, balances, members), money/, pwa/
 ```
 
-## Data model (Firestore)
+### Data model (Firestore)
 
-Security rules in `firestore.rules` (signed-in gating + per-ledger role checks). Collections:
+Security rules live in `firestore.rules` (signed-in gating + per-ledger role checks). Collections:
 
 - **`users/{uid}`** — profile mirror; readable by any signed-in user, writable only by the owner; `users/{uid}/private/**` is owner-only.
 - **`ledgers/{ledgerId}`** — a ledger with `createdBy` and a `memberUids` array. Created by a signed-in user who includes themselves in `memberUids`; readable by members; updatable by the owner (or editors, limited to `name` / `updatedAt` / `archivedAt`); never hard-deleted.
-  - **`members/{uid}`** — membership with a `role` (`owner` / `editor` / `viewer`); members can read, owners manage, and a user may add themselves on invite acceptance.
-  - **`entries/{entryId}`** — expense/transfer entries; created/updated by editors (creators or owner), members can read, no client deletes.
+  - **`members/{uid}`** — membership with a `role` (`owner` / `editor` / `viewer`); members read, owners manage, and a user may add themselves on invite acceptance.
+  - **`entries/{entryId}`** — expense/transfer entries; created/updated by editors (creators or owner), members read, no client deletes.
   - **`balances/{uid}`** — computed balances; member-readable, **never client-writable** (written by Cloud Functions).
   - **`audit/{auditId}`** — append-only audit log; member-readable, never client-writable.
 - **`invites/{inviteId}`** — created by a ledger owner; readable by the inviter, the invited email, or ledger members.
 
-## Cloud Functions
+Supporting indexes are declared in `firestore.indexes.json` (ledgers by `memberUids` + `deletedAt` + `updatedAt`, entries by `deletedAt` + `date`, invites by `email` + `status`).
 
-In `functions/` (TypeScript → compiled JS, `nodejs20`, Firebase Functions v2):
+### Cloud Functions
+
+In `functions/` (a Bun workspace; TypeScript → JS, `nodejs20`, Firebase Functions v2). All five are re-exported from `functions/src/index.ts`:
 
 - **`onEntryWrite`** — `onDocumentWritten("ledgers/{ledgerId}/entries/{entryId}")`; recomputes balances on entry changes.
 - **`onMemberWrite`** — `onDocumentWritten("ledgers/{ledgerId}/members/{uid}")`; member sync.
 - **`onInviteAccept`** — `onDocumentUpdated("invites/{inviteId}")`; handles invite acceptance.
-- **`sendInviteEmail`** — `onDocumentCreated("invites/{inviteId}")`; sends invite emails (via Resend).
-- **`fxDaily`** — `onSchedule("every day 05:00")`; daily FX-rate snapshots.
+- **`sendInviteEmail`** — `onDocumentCreated("invites/{inviteId}")`; sends invite emails via Resend, with an idempotent transactional claim so retries no-op (skips sending if `RESEND_API_KEY` is unset).
+- **`fxDaily`** — `onSchedule("every day 05:00")`; daily FX-rate snapshots into `fx/{day}`.
 
-Shared domain logic (`domain.ts`: minor-unit allocation, entry deltas, net computation, audit diff) is unit-tested.
+Shared domain logic (`functions/src/domain.ts`: minor-unit allocation, entry deltas, net computation, audit diff) is a deliberate server-side mirror of `src/lib/ledgers/{schema,splits,balances}.ts` and is unit-tested on both sides.
 
 ## Deployment
 
-The app is split into two deploy targets:
+The app splits into two deploy targets:
 
 1. **Firebase backend** — Firestore rules/indexes, Storage rules, and Cloud Functions. The configured project is `tally-eb` (`.firebaserc`).
 
@@ -146,12 +151,11 @@ The app is split into two deploy targets:
 
 Real invite-email delivery requires `RESEND_API_KEY` and a verified `INVITE_FROM_EMAIL`.
 
-> **Live URL:** none is configured in the repo. `firebase.json` has no `hosting` block (Firebase is backend-only here), and `APP_URL` defaults to `http://localhost:3000`. Set `APP_URL` to the deployed Vercel URL once the app is hosted.
+> **Live URL:** none is committed. `firebase.json` has no `hosting` block (Firebase is backend-only here), and `APP_URL` defaults to `http://localhost:3000`. Set `APP_URL` to the deployed Vercel URL once the app is hosted.
 
 ## Status
 
-Early but substantially built (`v0.1.0`). The repo includes auth, ledgers/members/entries, balances, exports, PWA support, security rules with emulator-backed rules tests, and the full Cloud Functions set. Notes:
+Early but substantially built (`v0.1.0`). The repo includes auth, ledgers / members / entries, balances, exports, PWA support, security rules with emulator-backed rules tests, an e2e golden-path spec, and the full Cloud Functions set. Notes:
 
-- This README reflects the `simplify/all` branch (recent commits consolidate Firestore hooks and harden domain/money/date correctness).
 - No production host is wired up yet — the backend project (`tally-eb`) exists, but there's no committed live URL and no Firebase Hosting config; the web app is intended for Vercel.
 - Run the full `bun run verify` gate before deploying.
